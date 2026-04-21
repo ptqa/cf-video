@@ -10,7 +10,7 @@ TMDB_API_BASE = "https://api.themoviedb.org/3"
 [[d1_databases]]
 binding = "DB"
 database_name = "cf-video-metadata"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "75a3cab0-4819-4e44-b0c6-b3df3ba26b56"
 
 [[r2_buckets]]
 binding = "BUCKET"

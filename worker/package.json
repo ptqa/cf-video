@@ -10,8 +10,8 @@
     "db:migrate:remote": "wrangler d1 execute cf-video-metadata --remote --file=src/db/schema.sql"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241205.0",
-    "typescript": "^5.7.0",
-    "wrangler": "^3.99.0"
+    "@cloudflare/workers-types": "^4.20260421.1",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.12.0"
   }
 }
