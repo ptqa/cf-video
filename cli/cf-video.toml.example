@@ -1,0 +1,19 @@
+# CF-Video Configuration
+# Copy this to cf-video.toml and fill in your credentials
+
+[cloudflare]
+account_id = "your-account-id"
+api_token = "your-api-token"
+
+[r2]
+bucket_name = "cf-video"
+endpoint = "https://<account-id>.r2.cloudflarestorage.com"
+access_key_id = "your-r2-access-key-id"
+secret_access_key = "your-r2-secret-access-key"
+
+[d1]
+database_id = "your-d1-database-id"
+
+[tmdb]
+api_key = "your-tmdb-api-key"
+# Get your API key at https://www.themoviedb.org/settings/api
