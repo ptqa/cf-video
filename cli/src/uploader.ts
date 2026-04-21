@@ -51,12 +51,28 @@ export class R2Uploader {
   /**
    * Upload video file, skipping if already exists with same size.
    * Returns true if uploaded, false if skipped.
+   * Calls onProgress with { loaded, total, percent } for progress tracking.
    */
-  async uploadVideo(key: string, body: Buffer | Uint8Array, contentType: string): Promise<boolean> {
+  async uploadVideo(
+    key: string,
+    body: Buffer | Uint8Array,
+    contentType: string,
+    onProgress?: (progress: { loaded: number; total: number; percent: number }) => void
+  ): Promise<boolean> {
     if (await this.exists(key, body.length)) {
       return false;
     }
+
+    if (onProgress) {
+      onProgress({ loaded: 0, total: body.length, percent: 0 });
+    }
+
     await this.upload(key, body, contentType);
+
+    if (onProgress) {
+      onProgress({ loaded: body.length, total: body.length, percent: 100 });
+    }
+
     return true;
   }
 
