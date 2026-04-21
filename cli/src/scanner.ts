@@ -2,39 +2,18 @@
  * Video directory scanner for movies and TV shows.
  */
 
-import { readdir, stat, readFile } from 'fs/promises';
+import { readdir, stat } from 'fs/promises';
 import { join, extname, basename, dirname } from 'path';
 import cliProgress from 'cli-progress';
-import { type R2Uploader } from './uploader';
+import { type R2Uploader, type UploadProgress } from './uploader';
 import { type D1Client } from './db';
 import { type TMDBClient } from './tmdb';
 import { extractMetadata, getContentType, type VideoMetadata } from './ffprobe';
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm']);
 
-// Concurrency limiter for parallel uploads
-async function pLimit<T>(concurrency: number, tasks: (() => Promise<T>)[]): Promise<T[]> {
-  const results: T[] = [];
-  const executing: Promise<void>[] = [];
+// ─── Helper Functions ─────────────────────────────────────────────────────────
 
-  for (let i = 0; i < tasks.length; i++) {
-    const task = tasks[i];
-    const p = task().then((result) => {
-      results[i] = result;
-    });
-    executing.push(p);
-
-    if (executing.length >= concurrency) {
-      await Promise.race(executing);
-      executing.splice(executing.findIndex((p) => p === Promise.race(executing)), 1);
-    }
-  }
-
-  await Promise.all(executing);
-  return results;
-}
-
-// Simple parallel map with concurrency limit
 async function parallelMap<T, R>(
   items: T[],
   concurrency: number,
@@ -58,8 +37,6 @@ async function parallelMap<T, R>(
   return results;
 }
 
-// ─── Progress Helpers ─────────────────────────────────────────────────────────
-
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -79,6 +56,77 @@ function calculateETA(current: number, total: number, startTime: number): string
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
+
+async function deterministicId(input: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  const bytes = new Uint8Array(hash);
+  const hex = Array.from(bytes.slice(0, 16))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[/\\?%*:|"<>]/g, '_').trim();
+}
+
+function getContainer(filePath: string): string {
+  const ext = extname(filePath).toLowerCase().slice(1);
+  switch (ext) {
+    case 'mkv': return 'mkv';
+    case 'mov': return 'mov';
+    case 'avi': return 'avi';
+    case 'webm': return 'webm';
+    default: return 'mp4';
+  }
+}
+
+function parseMovieFilename(filePath: string): MovieFileInfo {
+  const filename = basename(filePath, extname(filePath));
+  
+  // Pattern: "Movie Title (2020) [quality]"
+  const match = filename.match(/^(.*?)\s*\((\d{4})\)/);
+  if (match) {
+    return {
+      title: match[1].trim(),
+      year: parseInt(match[2]),
+      path: filePath,
+    };
+  }
+
+  // Fallback: just use filename as title
+  return {
+    title: filename.replace(/[._]/g, ' ').trim(),
+    year: null,
+    path: filePath,
+  };
+}
+
+export function parseEpisodeFilename(filename: string): { episode: number; title: string | null } | null {
+  // Patterns: S01E01, 1x01, Season 1 Episode 1
+  const patterns = [
+    /[Ss](\d+)[Ee](\d+)/,
+    /(\d+)[xX](\d+)/,
+    /Season\s*\d+\s*Episode\s*(\d+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = filename.match(pattern);
+    if (match) {
+      const episode = parseInt(match[2] || match[1]);
+      // Extract title after episode number
+      const titleMatch = filename.match(/[Ee]\d+[\s.-]*(.*?)(?:\[|$)/);
+      const title = titleMatch ? titleMatch[1].trim() : null;
+      return { episode, title };
+    }
+  }
+
+  return null;
+}
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 
 interface ScanResult {
   total: number;
@@ -100,6 +148,8 @@ interface EpisodeFileInfo {
   title: string | null;
   path: string;
 }
+
+// ─── Scanner Class ────────────────────────────────────────────────────────────
 
 export class Scanner {
   private uploader: R2Uploader;
@@ -166,11 +216,11 @@ export class Scanner {
     const safeTitle = sanitizeFilename(tmdbMovie.title);
     const r2Key = `videos/movies/${tmdbMovie.id}/${safeTitle}_${tmdbMovie.release_date?.split('-')[0] || 'unknown'}.mp4`;
 
-    // Read and upload video file
-    const fileBuffer = await readFile(filePath);
+    // Upload video file from disk
     const contentType = getContentType(filePath);
+    const fileSize = (await stat(filePath)).size;
     
-    const wasUploaded = await this.uploader.uploadVideo(r2Key, fileBuffer, contentType);
+    const wasUploaded = await this.uploader.uploadVideoFile(r2Key, filePath, contentType);
 
     // Download and upload poster
     let posterKey: string | null = null;
@@ -216,7 +266,7 @@ export class Scanner {
       r2_key: r2Key,
       poster_r2_key: posterKey,
       backdrop_r2_key: backdropKey,
-      file_size: fileBuffer.length,
+      file_size: fileSize,
     });
 
     return wasUploaded;
@@ -366,6 +416,32 @@ export class Scanner {
         }
       }
 
+      // Get episode files for this season
+      const episodeFiles = await this.findVideoFiles(seasonPath);
+      const episodes: Array<{ filePath: string; episodeInfo: { episode: number; title: string | null } }> = [];
+
+      for (const filePath of episodeFiles) {
+        const episodeInfo = parseEpisodeFilename(basename(filePath));
+        if (episodeInfo) {
+          episodes.push({ filePath, episodeInfo });
+        }
+      }
+
+      // Sort episodes by episode number
+      episodes.sort((a, b) => a.episodeInfo.episode - b.episodeInfo.episode);
+
+      if (episodes.length === 0) {
+        console.log(`    No episodes found in ${seasonEntry.name}`);
+        continue;
+      }
+
+      // Calculate total size for display
+      let totalSize = 0;
+      for (const ep of episodes) {
+        const s = await stat(ep.filePath);
+        totalSize += s.size;
+      }
+
       await this.db.upsertSeason({
         id: seasonId,
         show_id: showId,
@@ -374,56 +450,29 @@ export class Scanner {
         plot: seasonPlot,
         year: seasonYear,
         poster_r2_key: seasonPosterKey,
+        episode_count: episodes.length,
       });
 
-      // Process episodes
-      const episodeFiles = await readdir(seasonPath, { withFileTypes: true });
-      for (const episodeFile of episodeFiles) {
-        if (!episodeFile.isFile()) continue;
-        if (!VIDEO_EXTENSIONS.has(extname(episodeFile.name).toLowerCase())) continue;
+      // Process episodes with progress
+      const seasonResult = await this.processEpisodesWithProgress(
+        episodes,
+        showId,
+        seasonId,
+        tmdbShow.id,
+        seasonNumber
+      );
 
-        const episodePath = join(seasonPath, episodeFile.name);
-        const episodeInfo = parseEpisodeFilename(episodeFile.name);
-
-        if (!episodeInfo) {
-          console.warn(`Could not parse episode info from: ${episodeFile.name}`);
-          continue;
-        }
-
-        try {
-          const wasUploaded = await this.processEpisode(
-            episodePath,
-            showId,
-            seasonId,
-            episodeInfo,
-            tmdbShow.id,
-            seasonNumber
-          );
-          result.total++;
-          if (wasUploaded) {
-            result.uploaded++;
-            console.log(`  Uploaded: ${episodeFile.name}`);
-          } else {
-            result.skipped++;
-            console.log(`  Skipped: ${episodeFile.name}`);
-          }
-        } catch (err) {
-          result.errors++;
-          console.error(`  Error: ${episodeFile.name} - ${err}`);
-        }
-      }
+      result.total += seasonResult.total;
+      result.uploaded += seasonResult.uploaded;
+      result.skipped += seasonResult.skipped;
+      result.errors += seasonResult.errors;
     }
 
     return result;
   }
 
-  // ─── Flat Structure TV Show Processing ─────────────────────────────────────
-
   async processFlatShow(showName: string, showPath: string, episodeFiles: string[]): Promise<ScanResult> {
     const result: ScanResult = { total: 0, uploaded: 0, skipped: 0, errors: 0 };
-
-    console.log(`\nProcessing flat show: ${showName}`);
-    console.log(`Found ${episodeFiles.length} episode files`);
 
     // Search TMDB for show
     const searchResults = await this.tmdb.searchTVShow(showName);
@@ -434,7 +483,7 @@ export class Scanner {
     const tmdbShow = searchResults.results[0];
     const tmdbDetails = await this.tmdb.getTVShowDetails(tmdbShow.id);
 
-    // Generate show ID
+    // Generate IDs
     const showId = await deterministicId(`tvshow:${tmdbShow.id}`);
 
     // Download and upload poster
@@ -473,63 +522,58 @@ export class Scanner {
       backdrop_r2_key: backdropKey,
     });
 
-    // Group episodes by season
-    const episodesBySeason = new Map<number, Array<{ filePath: string; episode: number; title: string | null }>>();
-    
+    // Group episodes by season number
+    const episodesBySeason = new Map<number, Array<{ filePath: string; episodeInfo: { episode: number; title: string | null } }>>();
+
     for (const filePath of episodeFiles) {
-      const filename = basename(filePath);
-      const parsed = parseEpisodeFilename(filename);
-      if (!parsed) continue;
-      
-      const season = 2; // Extract from filename or default to 2 based on your files
-      
-      if (!episodesBySeason.has(season)) {
-        episodesBySeason.set(season, []);
+      const episodeInfo = parseEpisodeFilename(basename(filePath));
+      if (episodeInfo) {
+        // Extract season number from filename (S01E01 -> season 1)
+        const seasonMatch = basename(filePath).match(/[Ss](\d+)[Ee]\d+/);
+        const seasonNumber = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+        
+        if (!episodesBySeason.has(seasonNumber)) {
+          episodesBySeason.set(seasonNumber, []);
+        }
+        episodesBySeason.get(seasonNumber)!.push({ filePath, episodeInfo });
       }
-      episodesBySeason.get(season)!.push({
-        filePath,
-        episode: parsed.episode,
-        title: parsed.title
-      });
     }
 
     // Process each season
-    for (const [seasonNumber, episodes] of episodesBySeason) {
-      console.log(`\n  Processing Season ${seasonNumber} (${episodes.length} episodes)`);
+    const sortedSeasonNumbers = Array.from(episodesBySeason.keys()).sort((a, b) => a - b);
+
+    for (const seasonNumber of sortedSeasonNumbers) {
+      const episodes = episodesBySeason.get(seasonNumber)!;
       
-      // Create season
-      const seasonId = await deterministicId(`season:${showId}:${seasonNumber}`);
-      
+      // Sort episodes by episode number
+      episodes.sort((a, b) => a.episodeInfo.episode - b.episodeInfo.episode);
+
       // Get season info from TMDB
-      let seasonTitle: string | null = `Season ${seasonNumber}`;
+      let seasonTitle: string | null = null;
       let seasonPlot: string | null = null;
       let seasonYear: number | null = null;
-      let seasonPoster: string | null = null;
-      
+
       try {
         const tmdbSeason = await this.tmdb.getSeasonEpisodes(tmdbShow.id, seasonNumber);
-        if (tmdbSeason) {
-          seasonTitle = tmdbSeason.name || seasonTitle;
-          seasonPlot = tmdbSeason.overview || null;
-          seasonPoster = tmdbSeason.poster_path || null;
-          const firstEpisode = tmdbSeason.episodes?.[0];
-          seasonYear = firstEpisode?.air_date ? parseInt(firstEpisode.air_date.split('-')[0]) : null;
+        if (tmdbSeason.episodes && tmdbSeason.episodes.length > 0) {
+          const firstEpisode = tmdbSeason.episodes[0];
+          seasonTitle = `Season ${seasonNumber}`;
+          seasonPlot = null;
+          seasonYear = firstEpisode.air_date ? parseInt(firstEpisode.air_date.split('-')[0]) : null;
         }
       } catch {
-        // TMDB season info not available
+        // TMDB season info not available, continue without it
       }
-      
-      // Download season poster
-      let seasonPosterKey: string | null = null;
-      if (seasonPoster) {
-        const posterUrl = this.tmdb.getPosterUrl(seasonPoster, 'w342');
-        if (posterUrl) {
-          const posterBuffer = await this.tmdb.downloadImage(posterUrl);
-          seasonPosterKey = `posters/season_${seasonId}.jpg`;
-          await this.uploader.uploadImage(seasonPosterKey, posterBuffer, 'image/jpeg');
-        }
+
+      const seasonId = await deterministicId(`season:${showId}:${seasonNumber}`);
+
+      // Calculate total size for display
+      let totalSize = 0;
+      for (const ep of episodes) {
+        const s = await stat(ep.filePath);
+        totalSize += s.size;
       }
-      
+
       await this.db.upsertSeason({
         id: seasonId,
         show_id: showId,
@@ -537,103 +581,173 @@ export class Scanner {
         title: seasonTitle,
         plot: seasonPlot,
         year: seasonYear,
-        poster_r2_key: seasonPosterKey,
+        poster_r2_key: null,
         episode_count: episodes.length,
       });
-      
-      // Setup progress bar
-      const progressBar = new cliProgress.SingleBar({
-        format: '  {bar} {percentage}% | {value}/{total} files | Current: {filename} | Size: {size} | ETA: {eta}s',
-        barCompleteChar: '\u2588',
-        barIncompleteChar: '\u2591',
-        hideCursor: true,
-        clearOnComplete: false,
-        formatValue: (v: any, options: any, type: any) => {
-          if (type === 'size') {
-            return formatBytes(parseInt(v) || 0);
-          }
-          return v;
-        }
-      }, cliProgress.Presets.shades_classic);
 
-      progressBar.start(episodes.length, 0, {
-        filename: 'starting...',
-        size: 0,
-        eta: 'calculating'
-      });
-
-      const startTime = Date.now();
-      let lastUpdate = startTime;
-
-      // Process episodes in parallel
-      const episodeResults = await parallelMap(
+      // Process episodes with progress
+      const seasonResult = await this.processEpisodesWithProgress(
         episodes,
-        3,
-        async (ep, index) => {
-          try {
-            const fileSize = (await stat(ep.filePath)).size;
-            const startUpload = Date.now();
-            
-            progressBar.update(index, {
-              filename: basename(ep.filePath).slice(0, 40),
-              size: fileSize,
-              eta: calculateETA(index, episodes.length, startTime)
-            });
-
-            const wasUploaded = await this.processEpisode(
-              ep.filePath,
-              showId,
-              seasonId,
-              { episode: ep.episode, title: ep.title },
-              tmdbShow.id,
-              seasonNumber
-            );
-
-            const uploadTime = (Date.now() - startUpload) / 1000;
-            const speed = uploadTime > 0 ? (fileSize / uploadTime / 1024 / 1024).toFixed(1) : 0;
-
-            progressBar.update(index + 1, {
-              filename: `${basename(ep.filePath).slice(0, 30)} ${wasUploaded ? `↑${speed} MB/s` : 'skipped'}`,
-              size: fileSize
-            });
-
-            return { success: true, uploaded: wasUploaded };
-          } catch (err) {
-            progressBar.update(index + 1, {
-              filename: `${basename(ep.filePath).slice(0, 30)} ERROR`,
-              size: 0
-            });
-            return { success: false, uploaded: false };
-          }
-        }
+        showId,
+        seasonId,
+        tmdbShow.id,
+        seasonNumber
       );
 
-      progressBar.stop();
+      result.total += seasonResult.total;
+      result.uploaded += seasonResult.uploaded;
+      result.skipped += seasonResult.skipped;
+      result.errors += seasonResult.errors;
+    }
 
-      // Aggregate results
-      for (const r of episodeResults) {
-        result.total++;
-        if (r.success && r.uploaded) {
-          result.uploaded++;
-        } else if (r.success && !r.uploaded) {
-          result.skipped++;
-        } else {
-          result.errors++;
+    return result;
+  }
+
+  async processEpisodesWithProgress(
+    episodes: Array<{ filePath: string; episodeInfo: { episode: number; title: string | null } }>,
+    showId: string,
+    seasonId: string,
+    tmdbShowId: number,
+    seasonNumber: number
+  ): Promise<ScanResult> {
+    const result: ScanResult = { total: 0, uploaded: 0, skipped: 0, errors: 0 };
+
+    // Calculate total size of all episodes
+    let totalSize = 0;
+    const fileSizes: Map<string, number> = new Map();
+    for (const ep of episodes) {
+      const s = await stat(ep.filePath);
+      totalSize += s.size;
+      fileSizes.set(ep.filePath, s.size);
+    }
+
+    // Create a MultiBar with 3 file progress bars + 1 overall bar
+    const multiBar = new cliProgress.MultiBar({
+      format: '{bar} {percentage}% | {filename} | {size} | {speed}',
+      barCompleteChar: '\u2588',
+      barIncompleteChar: '\u2591',
+      hideCursor: true,
+      clearOnComplete: true,
+      stopOnComplete: true,
+      linewrap: false,
+    }, cliProgress.Presets.shades_classic);
+
+    // Create overall progress bar
+    const overallBar = multiBar.create(episodes.length, 0, {
+      filename: 'Overall Progress',
+      size: formatBytes(totalSize),
+      speed: ''
+    });
+
+    // Create individual file progress bars (3 for concurrency)
+    const fileBars = Array(3).fill(null).map((_, i) => {
+      return multiBar.create(100, 0, {
+        filename: `Waiting...`,
+        size: '',
+        speed: ''
+      });
+    });
+
+    const startTime = Date.now();
+
+    // Process episodes in parallel with progress bars
+    const episodeResults = await parallelMap(
+      episodes,
+      3,
+      async (ep, index) => {
+        const workerIndex = index % 3;
+        const bar = fileBars[workerIndex];
+        const fileName = basename(ep.filePath).slice(0, 35);
+        
+        try {
+          const fileSize = fileSizes.get(ep.filePath) || 0;
+          
+          // Check if already exists (HEAD request)
+          const r2Key = `videos/tv/${tmdbShowId}/season_${seasonNumber}/episode_${ep.episodeInfo.episode}.mp4`;
+          
+          if (await this.uploader.exists(r2Key, fileSize)) {
+            bar.update(100, {
+              filename: `${fileName} (skipped)`,
+              size: formatBytes(fileSize),
+              speed: 'already exists'
+            });
+            overallBar.increment(1);
+            return { success: true, uploaded: false };
+          }
+
+          bar.update(0, {
+            filename: `${fileName}`,
+            size: formatBytes(fileSize),
+            speed: 'starting...'
+          });
+
+          // Upload from disk with progress (no readFile, streams parts from disk)
+          const wasUploaded = await this.uploader.uploadVideoFile(
+            r2Key,
+            ep.filePath,
+            getContentType(ep.filePath),
+            (progress) => {
+              const speedMB = (progress.speed / 1024 / 1024).toFixed(1);
+              bar.update(progress.percent, {
+                filename: `${fileName}`,
+                size: `${formatBytes(progress.loaded)}/${formatBytes(progress.total)}`,
+                speed: `${speedMB} MB/s`
+              });
+            }
+          );
+
+          // Insert episode into database after successful upload
+          await this.processEpisodeDB(
+            ep.filePath,
+            showId,
+            seasonId,
+            ep.episodeInfo,
+            tmdbShowId,
+            seasonNumber,
+            r2Key,
+            fileSize
+          );
+
+          overallBar.increment(1);
+          return { success: true, uploaded: wasUploaded };
+        } catch (err) {
+          bar.update(0, {
+            filename: `${fileName} ERROR`,
+            size: '',
+            speed: String(err).slice(0, 30)
+          });
+          return { success: false, uploaded: false };
         }
+      }
+    );
+
+    multiBar.stop();
+
+    // Aggregate results
+    for (const r of episodeResults) {
+      result.total++;
+      if (r.success && r.uploaded) {
+        result.uploaded++;
+      } else if (r.success && !r.uploaded) {
+        result.skipped++;
+      } else {
+        result.errors++;
       }
     }
 
     return result;
   }
 
-  async processEpisode(
+  async processEpisodeDB(
     filePath: string,
     showId: string,
     seasonId: string,
     episodeInfo: { episode: number; title: string | null },
     tmdbShowId: number,
-    seasonNumber: number
-  ): Promise<boolean> {
+    seasonNumber: number,
+    r2Key: string,
+    fileSize: number
+  ): Promise<void> {
     // Extract metadata
     const metadata = await extractMetadata(filePath);
 
@@ -660,13 +774,6 @@ export class Scanner {
 
     const episodeId = await deterministicId(`episode:${showId}:${seasonId}:${episodeInfo.episode}`);
 
-    // Read and upload video file
-    const fileBuffer = await readFile(filePath);
-    const contentType = getContentType(filePath);
-    const r2Key = `videos/tv/${tmdbShowId}/season_${seasonNumber}/episode_${episodeInfo.episode}.mp4`;
-
-    const wasUploaded = await this.uploader.uploadVideo(r2Key, fileBuffer, contentType);
-
     // Download and upload still image if available
     let posterKey: string | null = null;
     if (stillPath) {
@@ -688,7 +795,7 @@ export class Scanner {
       plot: episodePlot,
       runtime: metadata.duration ? Math.round(metadata.duration / 60) : null,
       tmdb_id: episodeTmdbId,
-      content_type: contentType,
+      content_type: getContentType(filePath),
       container: metadata.container || 'mp4',
       video_codec: metadata.videoCodec,
       video_width: metadata.width,
@@ -698,10 +805,8 @@ export class Scanner {
       audio_channels: metadata.audioChannels,
       r2_key: r2Key,
       poster_r2_key: posterKey,
-      file_size: fileBuffer.length,
+      file_size: fileSize,
     });
-
-    return wasUploaded;
   }
 
   private async findVideoFiles(dirPath: string): Promise<string[]> {
@@ -723,78 +828,5 @@ export class Scanner {
         }
       }
     }
-  }
-}
-
-// ─── Filename Parsing ───────────────────────────────────────────────────────
-
-function parseMovieFilename(filePath: string): MovieFileInfo {
-  const filename = basename(filePath, extname(filePath));
-  
-  // Pattern: "Movie Title (2020) [quality]"
-  const match = filename.match(/^(.*?)\s*\((\d{4})\)/);
-  if (match) {
-    return {
-      title: match[1].trim(),
-      year: parseInt(match[2]),
-      path: filePath,
-    };
-  }
-
-  // Fallback: just use filename as title
-  return {
-    title: filename.replace(/[._]/g, ' ').trim(),
-    year: null,
-    path: filePath,
-  };
-}
-
-function parseEpisodeFilename(filename: string): { episode: number; title: string | null } | null {
-  // Patterns: S01E01, 1x01, Season 1 Episode 1
-  const patterns = [
-    /[Ss](\d+)[Ee](\d+)/,
-    /(\d+)[xX](\d+)/,
-    /Season\s*\d+\s*Episode\s*(\d+)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = filename.match(pattern);
-    if (match) {
-      const episode = parseInt(match[2] || match[1]);
-      // Extract title after episode number
-      const titleMatch = filename.match(/[Ee]\d+[\s.-]*(.*?)(?:\[|$)/);
-      const title = titleMatch ? titleMatch[1].trim() : null;
-      return { episode, title };
-    }
-  }
-
-  return null;
-}
-
-// ─── Utilities ─────────────────────────────────────────────────────────────
-
-async function deterministicId(input: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  const bytes = new Uint8Array(hash);
-  const hex = Array.from(bytes.slice(0, 16))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-}
-
-function sanitizeFilename(name: string): string {
-  return name.replace(/[/\\?%*:|"<>]/g, '_').trim();
-}
-
-function getContainer(filePath: string): string {
-  const ext = extname(filePath).toLowerCase().slice(1);
-  switch (ext) {
-    case 'mkv': return 'mkv';
-    case 'mov': return 'mov';
-    case 'avi': return 'avi';
-    case 'webm': return 'webm';
-    default: return 'mp4';
   }
 }
