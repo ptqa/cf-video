@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+dist/
+
+# Cloudflare
+.wrangler/
+.dev.vars
+worker/wrangler.toml
+
+# Credentials / config with secrets
+cf-video.toml
+.env
+.env.*
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
