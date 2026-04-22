@@ -177,7 +177,7 @@ For a 100GB library with 2 hours/day streaming:
 |--------|----------|--------|
 | Swiftfin | iOS/tvOS | Target |
 | Findroid | Android | Target |
-| Streamyfin | iOS/Android | Target |
+| Streamyfin | iOS/Android | Tested ✓ |
 | Infuse | iOS/tvOS/macOS | Target |
 | Jellyfin Web | Browser | Target |
 
