@@ -41,10 +41,41 @@ export async function handleUsers(
       return jellyfinSuccess(formatUser(ctx.user));
     }
 
+    case '': {
+      // Handle GET /Users - List all users (admin only)
+      if (ctx.request.method !== 'GET') {
+        return jellyfinError('Method not allowed', 405);
+      }
+
+      // Check if user is admin
+      if (ctx.user.is_admin !== 1) {
+        return jellyfinError('Admin access required', 403);
+      }
+
+      const users = await queries.getAllUsers(env.DB);
+      return jellyfinSuccess(users.map(formatUser));
+    }
+
+    case 'Public': {
+      // Handle GET /Users/Public - List publicly visible users
+      if (ctx.request.method !== 'GET') {
+        return jellyfinError('Method not allowed', 405);
+      }
+
+      const users = await queries.getPublicUsers(env.DB);
+      return jellyfinSuccess(users.map(formatUser));
+    }
+
     default: {
       // Handle /Users/{id}
-      if (pathParts[0] === 'Users' && pathParts[1]) {
+      if (pathParts[0] === 'Users' && pathParts[1] && !pathParts[2]) {
         const userId = pathParts[1];
+        
+        // Don't allow accessing special endpoints like 'Me', 'Public', 'New' as IDs
+        if (['Me', 'Public', 'New', 'AuthenticateByName'].includes(userId)) {
+          return jellyfinError('Unknown endpoint', 404);
+        }
+        
         const user = await queries.getUser(env.DB, userId);
         if (!user) {
           return jellyfinError('User not found', 404);

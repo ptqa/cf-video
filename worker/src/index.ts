@@ -27,6 +27,11 @@ export default {
       return handleSystem('System/Info/Public', {} as AuthenticatedContext, env);
     }
 
+    // Ping endpoint (no auth required)
+    if (path === '/System/Ping') {
+      return handleSystem('System/Ping', {} as AuthenticatedContext, env);
+    }
+
     // Authentication endpoint (no auth required)
     if (path === '/Users/AuthenticateByName') {
       return handleUsers('Users/AuthenticateByName', { request } as AuthenticatedContext, env);

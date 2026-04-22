@@ -62,11 +62,20 @@ export async function handleSystem(
       return jellyfinSuccess({
         LocalAddress: '',
         ServerName: env.SERVER_NAME,
-        Version: '10.8.13',
+        Version: '10.11.8',
         ProductName: 'Jellyfin Server',
         OperatingSystem: 'Linux',
         Id: 'cf-video-server',
         StartupWizardCompleted: true,
+      });
+    }
+
+    case 'Ping':
+    case 'System/Ping': {
+      // Ping endpoint - returns server name
+      return new Response(env.SERVER_NAME, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
       });
     }
 
