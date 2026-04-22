@@ -6,6 +6,7 @@ dist/
 .wrangler/
 .dev.vars
 worker/wrangler.toml
+tmp/
 
 # Credentials / config with secrets
 cf-video.toml

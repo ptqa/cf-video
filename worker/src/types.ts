@@ -130,48 +130,25 @@ export interface AuthenticatedContext {
   request: Request;
 }
 
-// Jellyfin API response types
+// Jellyfin API response types (aligned to OpenAPI SystemInfo schema)
 export interface JellyfinSystemInfo {
-  Id: string;
-  ServerName: string;
-  Version: string;
-  OperatingSystem: string;
-  OperatingSystemDisplayName: string;
-  HasUpdateAvailable: boolean;
-  SupportsLibraryMonitor: boolean;
-  SupportsRemoteControl: boolean;
-  SupportsMediaConversion: boolean;
-  EncodersContext: string;
-  WebSocketPortNumber: number;
-  IsInStartupWizard: boolean;
   LocalAddress: string | null;
-  WanAddress: string | null;
-  CustomAuthenticationProviderName: string;
-  AuthenticationProvider: string;
-  ServerDate: string;
-  StartupWizardCompleted: boolean;
-  HttpPort: number;
-  HttpsPort: number;
-  Certificate: string;
-  CanSelfRestart: boolean;
-  CanSelfUpdate: boolean;
+  ServerName: string | null;
+  Version: string | null;
+  ProductName: string | null;
+  OperatingSystem: string | null;
+  Id: string | null;
+  StartupWizardCompleted: boolean | null;
+  OperatingSystemDisplayName: string | null;
+  PackageName: string | null;
   HasPendingRestart: boolean;
   IsShuttingDown: boolean;
-  InternalEncoderPath: string;
-  ItemType: string;
-  SupportsContentUpload: boolean;
-  SupportsSync: boolean;
-  SupportsSharedDevices: boolean;
-  CanArchiveMedia: boolean;
-  CanDownloadContent: boolean;
-  SupportsContentDeletion: boolean;
-  CanSendMail: boolean;
-  HasDeadToken: boolean;
-  CanManageDevice: boolean;
-  IsInRemoteControl: boolean;
-  CanAccessLiveTv: boolean;
-  CanAccessLiveTvAdmin: boolean;
-  CanAccessLiveTvWithAuthorization: boolean;
-  CanControlLiveTv: boolean;
-  LiveTvSubscriptionStatus: string;
+  SupportsLibraryMonitor: boolean;
+  WebSocketPortNumber: number;
+  CompletedInstallations: unknown[] | null;
+  CanSelfRestart: boolean;
+  CanLaunchWebBrowser: boolean;
+  HasUpdateAvailable: boolean;
+  EncoderLocation: string | null;
+  SystemArchitecture: string | null;
 }

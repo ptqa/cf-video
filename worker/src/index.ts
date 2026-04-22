@@ -3,20 +3,44 @@ import { requireAuth } from './auth';
 import { handleSystem, jellyfinError, jellyfinSuccess } from './handlers/system';
 import { handleUsers } from './handlers/users';
 import { handleLibraries } from './handlers/libraries';
-import { handleMovies } from './handlers/movies';
+import { handleMovies, formatMediaSource } from './handlers/movies';
 import { handleTVShows } from './handlers/tvshows';
 import { handleStream } from './handlers/stream';
 import { handleImages } from './handlers/images';
 import { handleUserData } from './handlers/userdata';
+import * as queries from './db/queries';
+
+const SERVER_ID = 'cf01de0000000000000000000000cafe';
+
+/**
+ * PlaybackInfoResponse per Jellyfin OpenAPI spec.
+ */
+async function handlePlaybackInfo(itemId: string, ctx: AuthenticatedContext, env: Env): Promise<Response> {
+  let item: any = await queries.getMovie(env.DB, itemId);
+  if (!item) {
+    item = await queries.getEpisode(env.DB, itemId);
+  }
+  if (!item) {
+    return jellyfinError('Item not found', 404);
+  }
+
+  return jellyfinSuccess({
+    MediaSources: [formatMediaSource(item)],
+    PlaySessionId: crypto.randomUUID().replace(/-/g, ''),
+    ErrorCode: null,
+  });
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Log every request for debugging
-    const hasToken = (request.headers.get('Authorization') || '').includes('Token=');
-    console.log(`>> ${request.method} ${path} auth=${hasToken}`);
+    // Log every request for debugging (skip noisy socket requests)
+    if (path !== '/socket') {
+      const hasToken = (request.headers.get('Authorization') || '').includes('Token=');
+      console.log(`>> ${request.method} ${path} auth=${hasToken}`);
+    }
 
     // Health check
     if (path === '/' || path === '/health') {
@@ -60,6 +84,11 @@ export default {
     // QuickConnect
     if (path === '/QuickConnect/Enabled') {
       return new Response('false', { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    // WebSocket - not supported
+    if (path === '/socket') {
+      return new Response('WebSocket not supported', { status: 200 });
     }
 
     // Images (no auth required - clients fetch without token)
@@ -130,17 +159,49 @@ async function routeRequest(
     return handleLibraries('UserViews', ctx, env);
   }
 
-  // Sessions stub
+  // Sessions endpoints
   if (pathParts[0] === 'Sessions') {
     if (endpoint === 'Capabilities/Full') {
       return new Response('', { status: 204 });
     }
+    // POST /Sessions/Playing - report playback start (204 per spec)
+    if (endpoint === 'Playing' && ctx.request.method === 'POST') {
+      return handleUserData('SessionPlaying', ctx, env);
+    }
+    // POST /Sessions/Playing/Progress - report progress (204 per spec)
+    if (endpoint === 'Playing/Progress' && ctx.request.method === 'POST') {
+      return handleUserData('SessionProgress', ctx, env);
+    }
+    // POST /Sessions/Playing/Stopped - report playback stop (204 per spec)
+    if (endpoint === 'Playing/Stopped' && ctx.request.method === 'POST') {
+      return handleUserData('SessionStopped', ctx, env);
+    }
     return jellyfinSuccess([]);
+  }
+
+  // Video streaming: /Videos/{id}/stream, /Videos/{id}/stream.mp4
+  if (pathParts[0] === 'Videos') {
+    return handleStream('stream', ctx, env);
   }
 
   // Items endpoints: /Items/{id}, /Items/{id}/Images, etc.
   if (pathParts[0] === 'Items') {
+    // /Items/{id}/Download
+    if (pathParts[2] === 'Download') {
+      return handleStream('stream', ctx, env);
+    }
+    // /Items/{id}/PlaybackInfo
+    if (pathParts[2] === 'PlaybackInfo') {
+      return handlePlaybackInfo(pathParts[1], ctx, env);
+    }
     return handleMovies(endpoint, ctx, env);
+  }
+
+  // MediaInfo/PlaybackInfo
+  if (pathParts[0] === 'MediaInfo' && pathParts[1] === 'PlaybackInfo') {
+    const mediaInfoUrl = new URL(ctx.request.url);
+    const itemId = mediaInfoUrl.searchParams.get('itemId') || '';
+    return handlePlaybackInfo(itemId, ctx, env);
   }
 
   // TV Show endpoints - pass the top-level category so the handler can switch on it
@@ -166,7 +227,17 @@ async function routeRequest(
     return handleImages(endpoint, ctx, env);
   }
 
-  // User data (favorites, watched, resume)
+  // New-style user data routes per Jellyfin 10.11 spec:
+  // /UserPlayedItems/{itemId} and /UserFavoriteItems/{itemId}
+  if (pathParts[0] === 'UserPlayedItems') {
+    return handleUserData('UserPlayedItems', ctx, env);
+  }
+  if (pathParts[0] === 'UserFavoriteItems') {
+    return handleUserData('UserFavoriteItems', ctx, env);
+  }
+
+  // Legacy user data routes (favorites, watched, resume)
+  // /Users/{id}/PlayingItems/{itemId}, /Users/{id}/PlayedItems/{itemId}, /Users/{id}/FavoriteItems/{itemId}
   if (path.includes('/PlayingItems') || path.includes('/PlayedItems') || path.includes('/FavoriteItems')) {
     return handleUserData(endpoint, ctx, env);
   }

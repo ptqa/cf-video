@@ -1,5 +1,12 @@
 import { type Env, type AuthenticatedContext } from '../types';
 
+const SERVER_ID = 'cf01de0000000000000000000000cafe';
+
+/**
+ * Jellyfin-compatible error response.
+ * Uses a simple JSON object; not full ProblemDetails since most clients
+ * only check HTTP status code.
+ */
 export function jellyfinError(message: string, status: number = 400): Response {
   return new Response(
     JSON.stringify({ Error: message }),
@@ -27,52 +34,54 @@ export async function handleSystem(
 ): Promise<Response> {
   switch (endpoint) {
     case 'Info': {
+      // Matches Jellyfin OpenAPI SystemInfo schema
       return jellyfinSuccess({
-        Id: 'cf01de0000000000000000000000cafe',
+        LocalAddress: null,
         ServerName: env.SERVER_NAME,
         Version: env.SERVER_VERSION,
-        OperatingSystem: 'Cloudflare Workers',
-        OperatingSystemDisplayName: 'Cloudflare Workers',
-        HasUpdateAvailable: false,
-        SupportsLibraryMonitor: false,
-        SupportsRemoteControl: false,
-        SupportsMediaConversion: false,
-        EncodersContext: '',
-        WebSocketPortNumber: 0,
-        IsInStartupWizard: false,
-        LocalAddress: null,
-        WanAddress: null,
-        CustomAuthenticationProviderName: '',
-        AuthenticationProvider: '',
-        ServerDate: new Date().toISOString(),
+        ProductName: 'Jellyfin Server',
+        OperatingSystem: 'Linux',
+        Id: SERVER_ID,
         StartupWizardCompleted: true,
-        HttpPort: 443,
-        HttpsPort: 443,
-        Certificate: '',
-        CanSelfRestart: false,
-        CanSelfUpdate: false,
+        OperatingSystemDisplayName: 'Cloudflare Workers',
+        PackageName: 'cf-video',
         HasPendingRestart: false,
         IsShuttingDown: false,
-        InternalEncoderPath: '',
-        ItemType: 'ServerConfiguration',
+        SupportsLibraryMonitor: false,
+        WebSocketPortNumber: 0,
+        CompletedInstallations: [],
+        CanSelfRestart: false,
+        CanLaunchWebBrowser: false,
+        ProgramDataPath: null,
+        WebPath: null,
+        ItemsByNamePath: null,
+        CachePath: null,
+        LogPath: null,
+        InternalMetadataPath: null,
+        TranscodingTempPath: null,
+        CastReceiverApplications: null,
+        HasUpdateAvailable: false,
+        EncoderLocation: null,
+        SystemArchitecture: null,
       });
     }
 
     case 'Info/Public': {
+      // Matches Jellyfin OpenAPI PublicSystemInfo schema
       return jellyfinSuccess({
-        LocalAddress: '',
+        LocalAddress: null,
         ServerName: env.SERVER_NAME,
-        Version: '10.11.8',
+        Version: env.SERVER_VERSION,
         ProductName: 'Jellyfin Server',
-        OperatingSystem: '',
-        Id: 'cf01de0000000000000000000000cafe',
+        OperatingSystem: null,
+        Id: SERVER_ID,
         StartupWizardCompleted: true,
       });
     }
 
     case 'Ping': {
-      // Ping endpoint - returns server name
-      return new Response(env.SERVER_NAME, {
+      // POST /System/Ping returns "Jellyfin Server" as plain text
+      return new Response('Jellyfin Server', {
         status: 200,
         headers: { 'Content-Type': 'text/plain' },
       });

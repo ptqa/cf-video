@@ -5,6 +5,54 @@ import { jellyfinSuccess, jellyfinError } from './system';
 // Static library IDs
 const MOVIES_LIBRARY_ID = 'f137a2dd21bbc1b99aa5c0f6bf02a805';
 const TV_LIBRARY_ID = 'a656b907eb3a73532e40e44b968d0225';
+const SERVER_ID = 'cf01de0000000000000000000000cafe';
+
+/**
+ * Format a library view as a BaseItemDto with Type=CollectionFolder.
+ */
+function formatLibraryView(
+  name: string,
+  id: string,
+  collectionType: string,
+  childCount: number
+): Record<string, unknown> {
+  return {
+    Name: name,
+    ServerId: SERVER_ID,
+    Id: id,
+    Etag: null,
+    DateCreated: '2024-01-01T00:00:00.0000000Z',
+    CanDelete: false,
+    CanDownload: false,
+    SortName: name.toLowerCase(),
+    ExternalUrls: [],
+    Path: `/${collectionType}`,
+    EnableMediaSourceDisplay: true,
+    Taglines: [],
+    Genres: [],
+    PlayAccess: 'Full',
+    RemoteTrailers: [],
+    ProviderIds: {},
+    IsHD: null,
+    IsFolder: true,
+    ParentId: null,
+    Type: 'CollectionFolder',
+    People: [],
+    Studios: [],
+    GenreItems: [],
+    Tags: [],
+    PrimaryImageAspectRatio: null,
+    ImageTags: {},
+    BackdropImageTags: [],
+    ScreenshotImageTags: [],
+    ImageBlurHashes: {},
+    CollectionType: collectionType,
+    LocationType: 'FileSystem',
+    MediaType: 'Unknown',
+    LockedFields: [],
+    ChildCount: childCount,
+  };
+}
 
 export async function handleLibraries(
   endpoint: string,
@@ -13,86 +61,17 @@ export async function handleLibraries(
 ): Promise<Response> {
   switch (endpoint) {
     case 'UserViews': {
-      // Return virtual library views for the home screen
       const movieCount = await queries.getMovieCount(env.DB);
       const tvCount = await queries.getTVShowCount(env.DB);
 
       const items: Record<string, unknown>[] = [];
 
       if (movieCount > 0) {
-        items.push({
-          Name: 'Movies',
-          ServerId: 'cf01de0000000000000000000000cafe',
-          Id: MOVIES_LIBRARY_ID,
-          Etag: '',
-          DateCreated: '2024-01-01T00:00:00.0000000Z',
-          CanDelete: false,
-          CanDownload: false,
-          SortName: 'movies',
-          ExternalUrls: [],
-          Path: '/movies',
-          EnableMediaSourceDisplay: true,
-          Taglines: [],
-          Genres: [],
-          PlayAccess: 'Full',
-          RemoteTrailers: [],
-          ProviderIds: {},
-          IsFolder: true,
-          ParentId: '',
-          Type: 'CollectionFolder',
-          People: [],
-          Studios: [],
-          GenreItems: [],
-          TagItems: [],
-          LockedFields: [],
-          ImageTags: {},
-          BackdropImageTags: [],
-          ScreenshotImageTags: [],
-          ImageBlurHashes: {},
-          CollectionType: 'movies',
-          LocationType: 'FileSystem',
-          MediaType: 'Unknown',
-          Tags: [],
-          ChildCount: movieCount,
-        });
+        items.push(formatLibraryView('Movies', MOVIES_LIBRARY_ID, 'movies', movieCount));
       }
 
       if (tvCount > 0) {
-        items.push({
-          Name: 'TV Shows',
-          ServerId: 'cf01de0000000000000000000000cafe',
-          Id: TV_LIBRARY_ID,
-          Etag: '',
-          DateCreated: '2024-01-01T00:00:00.0000000Z',
-          CanDelete: false,
-          CanDownload: false,
-          SortName: 'tv shows',
-          ExternalUrls: [],
-          Path: '/tv',
-          EnableMediaSourceDisplay: true,
-          Taglines: [],
-          Genres: [],
-          PlayAccess: 'Full',
-          RemoteTrailers: [],
-          ProviderIds: {},
-          IsFolder: true,
-          ParentId: '',
-          Type: 'CollectionFolder',
-          People: [],
-          Studios: [],
-          GenreItems: [],
-          TagItems: [],
-          LockedFields: [],
-          ImageTags: {},
-          BackdropImageTags: [],
-          ScreenshotImageTags: [],
-          ImageBlurHashes: {},
-          CollectionType: 'tvshows',
-          LocationType: 'FileSystem',
-          MediaType: 'Unknown',
-          Tags: [],
-          ChildCount: tvCount,
-        });
+        items.push(formatLibraryView('TV Shows', TV_LIBRARY_ID, 'tvshows', tvCount));
       }
 
       return jellyfinSuccess({
@@ -103,20 +82,14 @@ export async function handleLibraries(
     }
 
     case 'MediaFolders': {
+      const items = [
+        formatLibraryView('Movies', MOVIES_LIBRARY_ID, 'movies', 0),
+        formatLibraryView('TV Shows', TV_LIBRARY_ID, 'tvshows', 0),
+      ];
       return jellyfinSuccess({
-        Items: [
-          {
-            Id: MOVIES_LIBRARY_ID,
-            Name: 'Movies',
-            CollectionType: 'movies',
-          },
-          {
-            Id: TV_LIBRARY_ID,
-            Name: 'TV Shows',
-            CollectionType: 'tvshows',
-          },
-        ],
-        TotalRecordCount: 2,
+        Items: items,
+        TotalRecordCount: items.length,
+        StartIndex: 0,
       });
     }
 
