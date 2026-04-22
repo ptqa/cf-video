@@ -16,9 +16,9 @@ export async function getAllUsers(db: D1Database): Promise<User[]> {
 }
 
 export async function getPublicUsers(db: D1Database): Promise<User[]> {
-  // Return non-hidden, non-disabled users
+  // Return all users for the login screen
   const { results } = await db.prepare(
-    'SELECT * FROM users WHERE is_admin = 0 ORDER BY username'
+    'SELECT * FROM users ORDER BY username'
   ).all<User>();
   return results;
 }

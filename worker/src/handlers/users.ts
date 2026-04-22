@@ -8,9 +8,6 @@ export async function handleUsers(
   ctx: AuthenticatedContext,
   env: Env
 ): Promise<Response> {
-  const url = new URL(ctx.request.url);
-  const pathParts = url.pathname.split('/').filter(Boolean);
-
   switch (endpoint) {
     case 'Users/AuthenticateByName': {
       if (ctx.request.method !== 'POST') {
@@ -68,6 +65,7 @@ export async function handleUsers(
 
     default: {
       // Handle /Users/{id}
+      const pathParts = ctx.request ? new URL(ctx.request.url).pathname.split('/').filter(Boolean) : [];
       if (pathParts[0] === 'Users' && pathParts[1] && !pathParts[2]) {
         const userId = pathParts[1];
         

@@ -32,6 +32,11 @@ export default {
       return handleSystem('System/Ping', {} as AuthenticatedContext, env);
     }
 
+    // Public user list (no auth required - Jellyfin clients need this for login screen)
+    if (path === '/Users/Public') {
+      return handleUsers('Public', { request } as AuthenticatedContext, env);
+    }
+
     // Authentication endpoint (no auth required)
     if (path === '/Users/AuthenticateByName') {
       return handleUsers('Users/AuthenticateByName', { request } as AuthenticatedContext, env);
