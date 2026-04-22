@@ -176,7 +176,7 @@ For a 100GB library with 2 hours/day streaming:
 | Client | Platform | Status |
 |--------|----------|--------|
 | Swiftfin | iOS/tvOS | Target |
-| Findroid | Android | Target |
+| Findroid | Android | Not working |
 | Streamyfin | iOS/Android | Tested ✓ |
 | Infuse | iOS/tvOS/macOS | Target |
 | Jellyfin Web | Browser | Target |
