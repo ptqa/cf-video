@@ -25,8 +25,6 @@ export async function handleSystem(
   ctx: AuthenticatedContext,
   env: Env
 ): Promise<Response> {
-  const url = new URL(ctx.request.url);
-
   switch (endpoint) {
     case 'System/Info': {
       return jellyfinSuccess({
@@ -62,9 +60,13 @@ export async function handleSystem(
 
     case 'System/Info/Public': {
       return jellyfinSuccess({
-        Id: 'cf-video-server',
+        LocalAddress: '',
         ServerName: env.SERVER_NAME,
-        Version: env.SERVER_VERSION,
+        Version: '10.8.13',
+        ProductName: 'Jellyfin Server',
+        OperatingSystem: 'Linux',
+        Id: 'cf-video-server',
+        StartupWizardCompleted: true,
       });
     }
 

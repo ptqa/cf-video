@@ -116,7 +116,7 @@ async function routeRequest(
   // User data (favorites, watched, resume)
   if (path.startsWith('/UserData/') || path.includes('/PlayingItems') || 
       path.includes('/PlayedItems') || path.includes('/FavoriteItems')) {
-    return handleUserData(endpoint, ctx, env);
+    return handleUserData('UserData', ctx, env);
   }
 
   return null;
