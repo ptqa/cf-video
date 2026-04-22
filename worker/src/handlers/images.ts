@@ -13,15 +13,15 @@ export async function handleImages(
   let r2Key: string | null = null;
   let imageType = 'Primary'; // Primary, Backdrop, etc.
 
-  if (pathParts[0] === 'Images' && pathParts.length >= 2) {
+  if (pathParts[0] === 'Items' && pathParts[2] === 'Images') {
+    // /Items/{id}/Images/Primary or /Items/{id}/Images/Backdrop/0
+    const itemId = pathParts[1];
+    imageType = pathParts[3] || url.searchParams.get('type') || 'Primary';
+    r2Key = await findImageKey(env, itemId, imageType);
+  } else if (pathParts[0] === 'Images' && pathParts.length >= 2) {
     // /Images/{type}/{id}
     imageType = pathParts[1];
     const itemId = pathParts[2];
-    r2Key = await findImageKey(env, itemId, imageType);
-  } else if (pathParts[0] === 'Items' && pathParts[2] === 'Images') {
-    // /Items/{id}/Images
-    const itemId = pathParts[1];
-    imageType = url.searchParams.get('type') || 'Primary';
     r2Key = await findImageKey(env, itemId, imageType);
   }
 

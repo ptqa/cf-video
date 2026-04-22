@@ -9,7 +9,7 @@ export async function handleUsers(
   env: Env
 ): Promise<Response> {
   switch (endpoint) {
-    case 'Users/AuthenticateByName': {
+    case 'AuthenticateByName': {
       if (ctx.request.method !== 'POST') {
         return jellyfinError('Method not allowed', 405);
       }
@@ -29,12 +29,46 @@ export async function handleUsers(
 
       return jellyfinSuccess({
         User: formatUser(result.user),
+        SessionInfo: {
+          PlayState: {
+            CanSeek: false,
+            IsPaused: false,
+            IsMuted: false,
+            RepeatMode: 'RepeatNone',
+            PlaybackOrder: 'Default',
+          },
+          AdditionalUsers: [],
+          Capabilities: {
+            PlayableMediaTypes: [],
+            SupportedCommands: [],
+            SupportsMediaControl: false,
+            SupportsPersistentIdentifier: true,
+          },
+          PlayableMediaTypes: [],
+          Id: result.token.slice(0, 32),
+          UserId: result.user.id,
+          UserName: result.user.username,
+          Client: 'Findroid',
+          LastActivityDate: new Date().toISOString(),
+          LastPlaybackCheckIn: '0001-01-01T00:00:00.0000000Z',
+          DeviceName: 'Unknown',
+          DeviceId: 'unknown',
+          ApplicationVersion: '1.0',
+          IsActive: true,
+          SupportsMediaControl: false,
+          SupportsRemoteControl: false,
+          NowPlayingQueue: [],
+          NowPlayingQueueFullItems: [],
+          HasCustomDeviceName: false,
+          ServerId: 'cf01de0000000000000000000000cafe',
+          SupportedCommands: [],
+        },
         AccessToken: result.token,
-        ServerId: 'cf-video-server',
+        ServerId: 'cf01de0000000000000000000000cafe',
       });
     }
 
-    case 'Users/Me': {
+    case 'Me': {
       return jellyfinSuccess(formatUser(ctx.user));
     }
 
@@ -89,7 +123,7 @@ function formatUser(user: User): Record<string, unknown> {
   return {
     Id: user.id,
     Name: user.username,
-    ServerId: 'cf-video-server',
+    ServerId: 'cf01de0000000000000000000000cafe',
     HasPassword: true,
     HasConfiguredPassword: true,
     HasConfiguredEasyPassword: false,

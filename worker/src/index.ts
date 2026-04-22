@@ -1,6 +1,6 @@
 import { type Env, type AuthenticatedContext } from './types';
 import { requireAuth } from './auth';
-import { handleSystem, jellyfinError } from './handlers/system';
+import { handleSystem, jellyfinError, jellyfinSuccess } from './handlers/system';
 import { handleUsers } from './handlers/users';
 import { handleLibraries } from './handlers/libraries';
 import { handleMovies } from './handlers/movies';
@@ -14,6 +14,10 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // Log every request for debugging
+    const hasToken = (request.headers.get('Authorization') || '').includes('Token=');
+    console.log(`>> ${request.method} ${path} auth=${hasToken}`);
+
     // Health check
     if (path === '/' || path === '/health') {
       return new Response(
@@ -22,27 +26,29 @@ export default {
       );
     }
 
-    // Public system info (no auth required)
+    // ─── Public endpoints (no auth required) ─────────────────────────────────
+
+    // System info
     if (path === '/System/Info/Public') {
-      return handleSystem('System/Info/Public', {} as AuthenticatedContext, env);
+      return handleSystem('Info/Public', {} as AuthenticatedContext, env);
     }
 
-    // Ping endpoint (no auth required)
+    // Ping
     if (path === '/System/Ping') {
-      return handleSystem('System/Ping', {} as AuthenticatedContext, env);
+      return handleSystem('Ping', {} as AuthenticatedContext, env);
     }
 
-    // Public user list (no auth required - Jellyfin clients need this for login screen)
+    // Public user list (login screen)
     if (path === '/Users/Public') {
       return handleUsers('Public', { request } as AuthenticatedContext, env);
     }
 
-    // Authentication endpoint (no auth required)
+    // Authentication
     if (path === '/Users/AuthenticateByName') {
-      return handleUsers('Users/AuthenticateByName', { request } as AuthenticatedContext, env);
+      return handleUsers('AuthenticateByName', { request } as AuthenticatedContext, env);
     }
 
-    // Branding (no auth required - shown on login screen)
+    // Branding (login screen)
     if (path === '/Branding/Configuration') {
       return new Response(JSON.stringify({
         LoginDisclaimer: '',
@@ -51,12 +57,18 @@ export default {
       }), { headers: { 'Content-Type': 'application/json' } });
     }
 
-    // QuickConnect (no auth required)
+    // QuickConnect
     if (path === '/QuickConnect/Enabled') {
       return new Response('false', { headers: { 'Content-Type': 'application/json' } });
     }
 
-    // All other endpoints require authentication
+    // Images (no auth required - clients fetch without token)
+    if (path.includes('/Images/')) {
+      return handleImages('', { request } as AuthenticatedContext, env);
+    }
+
+    // ─── Authenticated endpoints ─────────────────────────────────────────────
+
     const authResult = await requireAuth(request, env);
     if (authResult instanceof Response) {
       return authResult;
@@ -69,13 +81,16 @@ export default {
     };
 
     try {
-      // Route to appropriate handler
       const response = await routeRequest(path, authContext, env);
-      if (response) return response;
+      if (response) {
+        console.log(`${request.method} ${path} -> ${response.status}`);
+        return response;
+      }
 
+      console.log(`${request.method} ${path} -> 501 (not implemented)`);
       return jellyfinError('Endpoint not implemented', 501);
     } catch (err) {
-      console.error(`Error handling ${path}:`, err);
+      console.error(`${request.method} ${path} -> 500:`, err);
       return jellyfinError('Internal server error', 500);
     }
   },
@@ -86,44 +101,58 @@ async function routeRequest(
   ctx: AuthenticatedContext,
   env: Env
 ): Promise<Response | null> {
-  const url = new URL(ctx.request.url);
+  // pathParts: e.g. /Users/Me -> ["Users", "Me"]
   const pathParts = path.split('/').filter(Boolean);
+  // endpoint: everything after the first segment, e.g. "Me", "3a04.../Items"
+  const endpoint = pathParts.slice(1).join('/');
 
-  // System endpoints
-  if (path.startsWith('/System/')) {
-    return handleSystem(pathParts.slice(1).join('/'), ctx, env);
+  // System endpoints: /System/Info, /System/Ping, etc.
+  if (pathParts[0] === 'System') {
+    return handleSystem(endpoint, ctx, env);
   }
 
-  // User endpoints
-  if (path.startsWith('/Users/')) {
-    return handleUsers(pathParts.slice(1).join('/'), ctx, env);
+  // User endpoints: /Users/Me, /Users/{id}, etc.
+  if (pathParts[0] === 'Users') {
+    // Special case: /Users/{userId}/Items -> item browsing
+    if (pathParts.length >= 3 && pathParts[2] === 'Items') {
+      return handleMovies('', ctx, env);
+    }
+    return handleUsers(endpoint, ctx, env);
   }
 
   // Library endpoints
-  if (path.startsWith('/Library/')) {
-    return handleLibraries(pathParts.slice(1).join('/'), ctx, env);
+  if (pathParts[0] === 'Library') {
+    return handleLibraries(endpoint, ctx, env);
   }
 
-  // Movie/Item browsing endpoints
-  if (path.startsWith('/Users/') && path.includes('/Items')) {
-    return handleMovies('Users/Items', ctx, env);
+  // UserViews - library home screen
+  if (pathParts[0] === 'UserViews') {
+    return handleLibraries('UserViews', ctx, env);
   }
 
-  // Single item details
-  if (pathParts[0] === 'Items' && pathParts[1]) {
-    return handleMovies('Items', ctx, env);
+  // Sessions stub
+  if (pathParts[0] === 'Sessions') {
+    if (endpoint === 'Capabilities/Full') {
+      return new Response('', { status: 204 });
+    }
+    return jellyfinSuccess([]);
   }
 
-  // TV Show endpoints
-  if (path.startsWith('/Shows/')) {
+  // Items endpoints: /Items/{id}, /Items/{id}/Images, etc.
+  if (pathParts[0] === 'Items') {
+    return handleMovies(endpoint, ctx, env);
+  }
+
+  // TV Show endpoints - pass the top-level category so the handler can switch on it
+  if (pathParts[0] === 'Shows') {
     return handleTVShows('Shows', ctx, env);
   }
 
-  if (path.startsWith('/Seasons/')) {
+  if (pathParts[0] === 'Seasons') {
     return handleTVShows('Seasons', ctx, env);
   }
 
-  if (path.startsWith('/Episodes/')) {
+  if (pathParts[0] === 'Episodes') {
     return handleTVShows('Episodes', ctx, env);
   }
 
@@ -133,14 +162,13 @@ async function routeRequest(
   }
 
   // Images
-  if (path.startsWith('/Images/') || path.includes('/Images')) {
-    return handleImages('Images', ctx, env);
+  if (pathParts[0] === 'Images' || path.includes('/Images')) {
+    return handleImages(endpoint, ctx, env);
   }
 
   // User data (favorites, watched, resume)
-  if (path.startsWith('/UserData/') || path.includes('/PlayingItems') || 
-      path.includes('/PlayedItems') || path.includes('/FavoriteItems')) {
-    return handleUserData('UserData', ctx, env);
+  if (path.includes('/PlayingItems') || path.includes('/PlayedItems') || path.includes('/FavoriteItems')) {
+    return handleUserData(endpoint, ctx, env);
   }
 
   return null;

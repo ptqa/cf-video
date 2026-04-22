@@ -2,6 +2,8 @@ import { type Env, type AuthenticatedContext } from '../types';
 import * as queries from '../db/queries';
 import { jellyfinSuccess, jellyfinError } from './system';
 
+const SERVER_ID = 'cf01de0000000000000000000000cafe';
+
 export async function handleTVShows(
   endpoint: string,
   ctx: AuthenticatedContext,
@@ -13,49 +15,59 @@ export async function handleTVShows(
   switch (endpoint) {
     case 'Shows': {
       const showId = pathParts[1];
+
+      // /Shows/NextUp
+      if (showId === 'NextUp') {
+        return jellyfinSuccess({
+          Items: [],
+          TotalRecordCount: 0,
+          StartIndex: 0,
+        });
+      }
+
       if (!showId) {
-        // List all shows
         const limit = parseInt(url.searchParams.get('limit') || '100');
         const startIndex = parseInt(url.searchParams.get('startIndex') || '0');
         const shows = await queries.getTVShows(env.DB, limit, startIndex);
         return jellyfinSuccess({
-          Items: shows.map(s => formatTVShow(s, ctx.user.id)),
+          Items: shows.map(s => formatTVShow(s)),
           TotalRecordCount: shows.length,
           StartIndex: startIndex,
         });
       }
 
-      // Get specific show
       const show = await queries.getTVShow(env.DB, showId);
       if (!show) {
         return jellyfinError('Show not found', 404);
       }
 
-      // Check if requesting seasons
+      // /Shows/{id}/Seasons
       if (pathParts[2] === 'Seasons') {
         const seasons = await queries.getSeasons(env.DB, showId);
         return jellyfinSuccess({
           Items: seasons.map(s => formatSeason(s, show)),
           TotalRecordCount: seasons.length,
+          StartIndex: 0,
         });
       }
 
-      // Check if requesting episodes
+      // /Shows/{id}/Episodes
       if (pathParts[2] === 'Episodes') {
         const seasonId = url.searchParams.get('seasonId');
-        let episodes: Awaited<ReturnType<typeof queries.getEpisodes>>;
+        let episodes;
         if (seasonId) {
           episodes = await queries.getEpisodes(env.DB, seasonId);
         } else {
           episodes = await queries.getEpisodesByShow(env.DB, showId);
         }
         return jellyfinSuccess({
-          Items: episodes.map(e => formatEpisode(e, ctx.user.id)),
+          Items: episodes.map(e => formatEpisode(e, show)),
           TotalRecordCount: episodes.length,
+          StartIndex: 0,
         });
       }
 
-      return jellyfinSuccess(formatTVShow(show, ctx.user.id));
+      return jellyfinSuccess(formatTVShow(show));
     }
 
     case 'Seasons': {
@@ -80,7 +92,8 @@ export async function handleTVShows(
       if (!episode) {
         return jellyfinError('Episode not found', 404);
       }
-      return jellyfinSuccess(formatEpisode(episode, ctx.user.id));
+      const show = await queries.getTVShow(env.DB, episode.show_id);
+      return jellyfinSuccess(formatEpisode(episode, show));
     }
 
     default:
@@ -88,40 +101,44 @@ export async function handleTVShows(
   }
 }
 
-function formatTVShow(show: { id: string; title: string; original_title: string | null; year: number | null; plot: string | null; tmdb_id: string | null; imdb_id: string | null; rating: number | null; poster_r2_key: string | null; backdrop_r2_key: string | null }, userId: string): Record<string, unknown> {
+function formatTVShow(show: any): Record<string, unknown> {
   return {
-    Id: show.id,
     Name: show.title,
-    OriginalTitle: show.original_title,
-    ServerId: 'cf-video-server',
+    ServerId: SERVER_ID,
+    Id: show.id,
     Type: 'Series',
+    IsFolder: true,
+    OriginalTitle: show.original_title,
     Year: show.year,
+    ProductionYear: show.year,
     Overview: show.plot,
+    CommunityRating: show.rating,
     ProviderIds: {
       Tmdb: show.tmdb_id,
       Imdb: show.imdb_id,
     },
-    CommunityRating: show.rating,
     UserData: {
       PlaybackPositionTicks: 0,
       PlayCount: 0,
       IsFavorite: false,
       Played: false,
+      UnplayedItemCount: 0,
     },
-    ImageTags: {
-      Primary: show.poster_r2_key ? 'poster' : null,
-      Backdrop: show.backdrop_r2_key ? 'backdrop' : null,
-    },
+    ImageTags: show.poster_r2_key ? { Primary: 'poster' } : {},
+    BackdropImageTags: show.backdrop_r2_key ? ['backdrop'] : [],
+    MediaType: 'Unknown',
   };
 }
 
-function formatSeason(season: { id: string; season_number: number; title: string | null; plot: string | null; year: number | null; poster_r2_key: string | null; episode_count: number }, show: { title: string }): Record<string, unknown> {
+function formatSeason(season: any, show: any): Record<string, unknown> {
   return {
-    Id: season.id,
     Name: season.title || `Season ${season.season_number}`,
-    ServerId: 'cf-video-server',
+    ServerId: SERVER_ID,
+    Id: season.id,
+    SeriesId: season.show_id,
+    SeriesName: show?.title || '',
     Type: 'Season',
-    SeriesName: show.title,
+    IsFolder: true,
     IndexNumber: season.season_number,
     Overview: season.plot,
     ProductionYear: season.year,
@@ -130,31 +147,72 @@ function formatSeason(season: { id: string; season_number: number; title: string
       PlayCount: 0,
       IsFavorite: false,
       Played: false,
+      UnplayedItemCount: season.episode_count || 0,
     },
-    ImageTags: {
-      Primary: season.poster_r2_key ? 'poster' : null,
-    },
+    ImageTags: season.poster_r2_key ? { Primary: 'poster' } : {},
+    BackdropImageTags: [],
     ChildCount: season.episode_count,
   };
 }
 
-function formatEpisode(episode: { id: string; title: string; episode_number: number; plot: string | null; runtime: number | null; poster_r2_key: string | null }, userId: string): Record<string, unknown> {
+function formatEpisode(episode: any, show: any): Record<string, unknown> {
   return {
-    Id: episode.id,
     Name: episode.title,
-    ServerId: 'cf-video-server',
+    ServerId: SERVER_ID,
+    Id: episode.id,
+    SeriesId: episode.show_id,
+    SeriesName: show?.title || '',
+    SeasonId: episode.season_id,
     Type: 'Episode',
+    IsFolder: false,
     IndexNumber: episode.episode_number,
+    ParentIndexNumber: episode.season_number,
     Overview: episode.plot,
-    RunTimeTicks: episode.runtime ? episode.runtime * 10000000 : null,
+    RunTimeTicks: episode.runtime ? episode.runtime * 60 * 10000000 : null,
     UserData: {
       PlaybackPositionTicks: 0,
       PlayCount: 0,
       IsFavorite: false,
       Played: false,
     },
-    ImageTags: {
-      Primary: episode.poster_r2_key ? 'poster' : null,
-    },
+    ImageTags: episode.poster_r2_key ? { Primary: 'poster' } : {},
+    BackdropImageTags: [],
+    MediaType: 'Video',
+    MediaSources: [{
+      Id: episode.id,
+      Path: episode.r2_key,
+      Type: 'Default',
+      Container: episode.container || 'mp4',
+      Size: episode.file_size,
+      Name: episode.title,
+      IsRemote: false,
+      RunTimeTicks: episode.runtime ? episode.runtime * 60 * 10000000 : null,
+      SupportsTranscoding: false,
+      SupportsDirectStream: true,
+      SupportsDirectPlay: true,
+      IsInfiniteStream: false,
+      RequiresOpening: false,
+      RequiresClosing: false,
+      RequiresLooping: false,
+      SupportsProbing: false,
+      MediaStreams: [
+        {
+          Codec: episode.video_codec,
+          Type: 'Video',
+          Width: episode.video_width,
+          Height: episode.video_height,
+          AverageFrameRate: episode.video_fps,
+          IsDefault: true,
+          Index: 0,
+        },
+        {
+          Codec: episode.audio_codec,
+          Type: 'Audio',
+          Channels: episode.audio_channels,
+          IsDefault: true,
+          Index: 1,
+        },
+      ],
+    }],
   };
 }

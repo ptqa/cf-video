@@ -216,3 +216,15 @@ export async function getRecentlyAdded(
   ).bind(limit).all<Movie | Episode>();
   return results;
 }
+
+// ─── Counts ──────────────────────────────────────────────────────────────
+
+export async function getMovieCount(db: D1Database): Promise<number> {
+  const row = await db.prepare('SELECT COUNT(*) as count FROM movies').first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+export async function getTVShowCount(db: D1Database): Promise<number> {
+  const row = await db.prepare('SELECT COUNT(*) as count FROM tv_shows').first<{ count: number }>();
+  return row?.count ?? 0;
+}

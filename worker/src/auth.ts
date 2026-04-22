@@ -15,7 +15,7 @@ export async function authenticateUser(
   const isValid = await verifyPassword(password, user.password_hash);
   if (!isValid) return null;
 
-  const token = await generateJWT(user);
+  const token = await generateToken(user);
   return { user, token };
 }
 
@@ -25,7 +25,12 @@ async function verifyPassword(password: string, hash: string): Promise<boolean> 
   return password === hash;
 }
 
-async function generateJWT(user: User): Promise<string> {
+/**
+ * Generate a hex access token that encodes the user payload.
+ * Format: hex(JSON payload) + "." + hex(SHA-256 signature)
+ * Uses only hex characters (0-9a-f) to avoid header encoding issues.
+ */
+async function generateToken(user: User): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload: JWTPayload = {
     userId: user.id,
@@ -35,34 +40,45 @@ async function generateJWT(user: User): Promise<string> {
     exp: now + JWT_EXPIRY,
   };
 
-  // Simple JWT implementation
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const body = btoa(JSON.stringify(payload));
-  const signature = await signJWT(`${header}.${body}`);
+  const payloadHex = toHex(JSON.stringify(payload));
+  const signatureHex = await signPayload(payloadHex);
 
-  return `${header}.${body}.${signature}`;
+  return `${payloadHex}${signatureHex}`;
 }
 
-async function signJWT(data: string): Promise<string> {
-  // In production, use proper HMAC with secret from env
-  // For now, simple hash
+function toHex(str: string): string {
   const encoder = new TextEncoder();
-  const msg = encoder.encode(data);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msg);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return btoa(String.fromCharCode(...hashArray));
+  return Array.from(encoder.encode(str)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function verifyJWT(token: string): Promise<JWTPayload | null> {
+function fromHex(hex: string): string {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+async function signPayload(data: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(data));
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function verifyToken(token: string): Promise<JWTPayload | null> {
   try {
-    const [header, body, signature] = token.split('.');
-    if (!header || !body || !signature) return null;
+    // Token = hex(payload) + hex(64-char signature)
+    // Signature is always 64 hex chars (32 bytes SHA-256)
+    if (token.length < 65) return null;
+
+    const signatureHex = token.slice(-64);
+    const payloadHex = token.slice(0, -64);
 
     // Verify signature
-    const expectedSignature = await signJWT(`${header}.${body}`);
-    if (signature !== expectedSignature) return null;
+    const expectedSignature = await signPayload(payloadHex);
+    if (signatureHex !== expectedSignature) return null;
 
-    const payload: JWTPayload = JSON.parse(atob(body));
+    const payload: JWTPayload = JSON.parse(fromHex(payloadHex));
 
     // Check expiration
     if (payload.exp < Math.floor(Date.now() / 1000)) return null;
@@ -114,7 +130,7 @@ export async function requireAuth(
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const payload = await verifyJWT(token);
+  const payload = await verifyToken(token);
   if (!payload) {
     return new Response('Unauthorized', { status: 401 });
   }

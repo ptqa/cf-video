@@ -26,9 +26,9 @@ export async function handleSystem(
   env: Env
 ): Promise<Response> {
   switch (endpoint) {
-    case 'System/Info': {
+    case 'Info': {
       return jellyfinSuccess({
-        Id: 'cf-video-server',
+        Id: 'cf01de0000000000000000000000cafe',
         ServerName: env.SERVER_NAME,
         Version: env.SERVER_VERSION,
         OperatingSystem: 'Cloudflare Workers',
@@ -58,20 +58,19 @@ export async function handleSystem(
       });
     }
 
-    case 'System/Info/Public': {
+    case 'Info/Public': {
       return jellyfinSuccess({
         LocalAddress: '',
         ServerName: env.SERVER_NAME,
         Version: '10.11.8',
         ProductName: 'Jellyfin Server',
-        OperatingSystem: 'Linux',
-        Id: 'cf-video-server',
+        OperatingSystem: '',
+        Id: 'cf01de0000000000000000000000cafe',
         StartupWizardCompleted: true,
       });
     }
 
-    case 'Ping':
-    case 'System/Ping': {
+    case 'Ping': {
       // Ping endpoint - returns server name
       return new Response(env.SERVER_NAME, {
         status: 200,
