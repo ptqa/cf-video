@@ -14,12 +14,12 @@ export async function handleUsers(
         return jellyfinError('Method not allowed', 405);
       }
 
-      const body = await ctx.request.json() as { Username?: string; Password?: string };
-      const username = body.Username;
-      const password = body.Password;
+      const body = await ctx.request.json() as { Username?: string; Name?: string; Password?: string; Pw?: string };
+      const username = body.Username || body.Name;
+      const password = body.Pw ?? body.Password ?? '';
 
-      if (!username || !password) {
-        return jellyfinError('Username and password required', 400);
+      if (!username) {
+        return jellyfinError('Username required', 400);
       }
 
       const result = await authenticateUser(env.DB, username, password);

@@ -73,16 +73,47 @@ export async function verifyJWT(token: string): Promise<JWTPayload | null> {
   }
 }
 
+/**
+ * Extract auth token from request.
+ * Jellyfin clients send tokens in various ways:
+ * - X-Emby-Authorization: MediaBrowser Token="..."
+ * - X-MediaBrowser-Token: ...
+ * - Authorization: MediaBrowser Token="..."
+ * - ?api_key=... query parameter
+ */
+function extractToken(request: Request): string | null {
+  // Check X-MediaBrowser-Token header
+  const mbToken = request.headers.get('X-MediaBrowser-Token');
+  if (mbToken) return mbToken;
+
+  // Check api_key query parameter
+  const url = new URL(request.url);
+  const apiKey = url.searchParams.get('api_key') || url.searchParams.get('ApiKey');
+  if (apiKey) return apiKey;
+
+  // Check Authorization or X-Emby-Authorization header for MediaBrowser Token="..." or Bearer
+  const authHeader = request.headers.get('Authorization') || request.headers.get('X-Emby-Authorization');
+  if (authHeader) {
+    // MediaBrowser scheme: Token="..."
+    const tokenMatch = authHeader.match(/Token="([^"]+)"/);
+    if (tokenMatch) return tokenMatch[1];
+
+    // Bearer scheme
+    if (authHeader.startsWith('Bearer ')) return authHeader.slice(7);
+  }
+
+  return null;
+}
+
 export async function requireAuth(
   request: Request,
   env: Env
 ): Promise<{ user: User; token: string } | Response> {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const token = extractToken(request);
+  if (!token) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const token = authHeader.slice(7);
   const payload = await verifyJWT(token);
   if (!payload) {
     return new Response('Unauthorized', { status: 401 });

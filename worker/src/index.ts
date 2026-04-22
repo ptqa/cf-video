@@ -42,6 +42,20 @@ export default {
       return handleUsers('Users/AuthenticateByName', { request } as AuthenticatedContext, env);
     }
 
+    // Branding (no auth required - shown on login screen)
+    if (path === '/Branding/Configuration') {
+      return new Response(JSON.stringify({
+        LoginDisclaimer: '',
+        CustomCss: '',
+        SplashscreenEnabled: false,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    // QuickConnect (no auth required)
+    if (path === '/QuickConnect/Enabled') {
+      return new Response('false', { headers: { 'Content-Type': 'application/json' } });
+    }
+
     // All other endpoints require authentication
     const authResult = await requireAuth(request, env);
     if (authResult instanceof Response) {
