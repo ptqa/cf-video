@@ -24,6 +24,16 @@ export async function handleMovies(
     });
   }
 
+  // GET /Items/Suggestions - return recently added items as suggestions
+  if (endpoint === 'Suggestions') {
+    return handleSuggestions(url, ctx, env);
+  }
+
+  // GET /UserItems/Resume - get items with resume position (partially watched)
+  if (endpoint === 'Resume') {
+    return handleResumeItems(url, ctx, env);
+  }
+
   // GET /Items?parentId=...&includeItemTypes=... - list items
   if (endpoint === '' || endpoint === undefined) {
     return handleItemsList(url, ctx, env);
@@ -116,6 +126,83 @@ async function handleItemsList(
     Items: items,
     TotalRecordCount: totalCount,
     StartIndex: startIndex,
+  });
+}
+
+async function handleSuggestions(
+  url: URL,
+  ctx: AuthenticatedContext,
+  env: Env
+): Promise<Response> {
+  const limit = parseInt(url.searchParams.get('limit') || url.searchParams.get('Limit') || '6');
+  const type = url.searchParams.get('type') || url.searchParams.get('Type') || 'Movie';
+
+  let items: Record<string, unknown>[] = [];
+
+  // Get recent movies or shows based on type parameter
+  if (type === 'Movie' || type === 'Movie,Series' || type === 'Series,Movie') {
+    const movies = await queries.getMovies(env.DB, limit, 0);
+    items = [...items, ...movies.map(formatMovieItem)];
+  }
+
+  if (type === 'Series' || type === 'Movie,Series' || type === 'Series,Movie') {
+    const shows = await queries.getTVShows(env.DB, limit, 0);
+    items = [...items, ...shows.map(formatTVShowItem)];
+  }
+
+  // Limit to requested amount
+  items = items.slice(0, limit);
+
+  return jellyfinSuccess({
+    Items: items,
+    TotalRecordCount: items.length,
+    StartIndex: 0,
+  });
+}
+
+async function handleResumeItems(
+  url: URL,
+  ctx: AuthenticatedContext,
+  env: Env
+): Promise<Response> {
+  const limit = parseInt(url.searchParams.get('limit') || url.searchParams.get('Limit') || '12');
+  const includeItemTypes = url.searchParams.get('includeItemTypes') || url.searchParams.get('IncludeItemTypes') || '';
+
+  // Use the existing getContinueWatching query which returns items with playback_position > 0 AND played = 0
+  const continueWatching = await queries.getContinueWatching(env.DB, ctx.user.id, limit * 2);
+
+  let items: Record<string, unknown>[] = [];
+
+  for (const cw of continueWatching) {
+    // Filter by item type if specified
+    if (includeItemTypes) {
+      const itemType = cw.item_type === 'movie' ? 'Movie' : 'Episode';
+      if (!includeItemTypes.includes(itemType)) {
+        continue;
+      }
+    }
+
+    if (cw.item_type === 'movie') {
+      const movie = await queries.getMovie(env.DB, cw.item_id);
+      if (movie) {
+        items.push(formatMovieItem(movie));
+      }
+    } else if (cw.item_type === 'episode') {
+      const episode = await queries.getEpisode(env.DB, cw.item_id);
+      if (episode) {
+        const show = await queries.getTVShow(env.DB, episode.show_id);
+        items.push(formatEpisodeItem(episode, show));
+      }
+    }
+  }
+
+  // Limit to requested amount
+  items = items.slice(0, limit);
+
+  return jellyfinSuccess({
+    Items: items,
+    TotalRecordCount: items.length,
+    StartIndex: 0,
   });
 }
 

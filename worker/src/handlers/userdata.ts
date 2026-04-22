@@ -200,7 +200,7 @@ export async function handleUserData(
           last_played_at: new Date().toISOString(),
         });
       }
-      return new Response('', { status: 204 });
+      return new Response(null, { status: 204 });
     }
 
     // POST /Users/{id}/PlayingItems/{itemId} - report start
@@ -208,7 +208,7 @@ export async function handleUserData(
       await queries.setUserData(env.DB, ctx.user.id, itemId, itemType, {
         last_played_at: new Date().toISOString(),
       });
-      return new Response('', { status: 204 });
+      return new Response(null, { status: 204 });
     }
   }
 

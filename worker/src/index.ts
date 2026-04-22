@@ -162,7 +162,7 @@ async function routeRequest(
   // Sessions endpoints
   if (pathParts[0] === 'Sessions') {
     if (endpoint === 'Capabilities/Full') {
-      return new Response('', { status: 204 });
+      return new Response(null, { status: 204 });
     }
     // POST /Sessions/Playing - report playback start (204 per spec)
     if (endpoint === 'Playing' && ctx.request.method === 'POST') {
@@ -234,6 +234,11 @@ async function routeRequest(
   }
   if (pathParts[0] === 'UserFavoriteItems') {
     return handleUserData('UserFavoriteItems', ctx, env);
+  }
+
+  // /UserItems/Resume - get items with resume position
+  if (pathParts[0] === 'UserItems' && pathParts[1] === 'Resume') {
+    return handleMovies('Resume', ctx, env);
   }
 
   // Legacy user data routes (favorites, watched, resume)
